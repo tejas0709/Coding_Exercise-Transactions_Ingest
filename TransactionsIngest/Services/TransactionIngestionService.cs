@@ -76,6 +76,17 @@ public sealed class TransactionIngestionService(
             }
 
             var changes = GetChanges(existing, incoming);
+            if (existing.Status != TransactionStatus.Active)
+            {
+                changes.Add(new AuditChange
+                {
+                    Field = "Status",
+                    OldValue = existing.Status.ToString(),
+                    NewValue = TransactionStatus.Active.ToString()
+                });
+                existing.Status = TransactionStatus.Active;
+            }
+
             if (changes.Count == 0)
             {
                 continue;
