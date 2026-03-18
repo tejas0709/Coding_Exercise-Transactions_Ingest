@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TransactionsIngest.Configuration;
 using TransactionsIngest.Data;
 using TransactionsIngest.DTOs;
+using TransactionsIngest.Models;
 using TransactionsIngest.Services;
 
 namespace TransactionsIngest.Tests;
@@ -20,6 +21,60 @@ public sealed class TransactionIngestionServiceTests
         var summary = await service.ExecuteRunAsync();
 
         Assert.NotEqual(Guid.Empty, summary.RunId);
+    }
+
+    [Fact]
+    public async Task ExecuteRunAsync_UpdatesExistingRecord_AndWritesAudit()
+    {
+        var now = new DateTime(2026, 3, 18, 12, 0, 0, DateTimeKind.Utc);
+        await using var fixture = await SqliteFixture.CreateAsync();
+
+        await using (var seedContext = fixture.CreateDbContext())
+        {
+            seedContext.Transactions.Add(new TransactionRecord
+            {
+                TransactionId = 1001,
+                CardNumber = "************1111",
+                LocationCode = "STO-01",
+                ProductName = "Wireless Mouse",
+                Amount = 19.99m,
+                TransactionTimeUtc = now.AddHours(-2),
+                Status = TransactionStatus.Active,
+                CreatedAtUtc = now.AddHours(-2),
+                UpdatedAtUtc = now.AddHours(-2)
+            });
+            await seedContext.SaveChangesAsync();
+        }
+
+        await using (var context = fixture.CreateDbContext())
+        {
+            var service = CreateService(
+                context,
+                now,
+                [
+                    new IncomingTransactionDto
+                    {
+                        TransactionId = 1001,
+                        CardNumber = "4111111111111111",
+                        LocationCode = "STO-09",
+                        ProductName = "Wireless Mouse",
+                        Amount = 21.99m,
+                        Timestamp = now.AddHours(-1)
+                    }
+                ]);
+
+            var summary = await service.ExecuteRunAsync();
+
+            Assert.Equal(0, summary.InsertedCount);
+            Assert.Equal(1, summary.UpdatedCount);
+
+            var updated = await context.Transactions.SingleAsync(x => x.TransactionId == 1001);
+            Assert.Equal("STO-09", updated.LocationCode);
+            Assert.Equal(21.99m, updated.Amount);
+
+            var updateAudit = await context.TransactionAudits.SingleAsync(x => x.TransactionId == 1001 && x.Action == "Updated");
+            Assert.NotNull(updateAudit);
+        }
     }
 
     private static TransactionIngestionService CreateService(
