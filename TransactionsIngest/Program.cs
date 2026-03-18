@@ -38,4 +38,3 @@ Console.WriteLine($"Inserted: {summary.InsertedCount}");
 Console.WriteLine($"Updated: {summary.UpdatedCount}");
 Console.WriteLine($"Revoked: {summary.RevokedCount}");
 Console.WriteLine($"Finalized: {summary.FinalizedCount}");
-Console.WriteLine("Hello, World!");
