@@ -141,6 +141,58 @@ public sealed class TransactionIngestionServiceTests
         }
     }
 
+    [Fact]
+    public async Task ExecuteRunAsync_IsIdempotent_ForSameSnapshot()
+    {
+        var now = new DateTime(2026, 3, 18, 12, 0, 0, DateTimeKind.Utc);
+        await using var fixture = await SqliteFixture.CreateAsync();
+
+        var snapshot = new List<IncomingTransactionDto>
+        {
+            new()
+            {
+                TransactionId = 1001,
+                CardNumber = "4111111111111111",
+                LocationCode = "STO-01",
+                ProductName = "Wireless Mouse",
+                Amount = 19.99m,
+                Timestamp = now.AddHours(-1)
+            },
+            new()
+            {
+                TransactionId = 1002,
+                CardNumber = "4000000000000002",
+                LocationCode = "STO-02",
+                ProductName = "USB-C Cable",
+                Amount = 25m,
+                Timestamp = now.AddHours(-2)
+            }
+        };
+
+        await using (var firstContext = fixture.CreateDbContext())
+        {
+            var service = CreateService(firstContext, now, snapshot);
+            await service.ExecuteRunAsync();
+        }
+
+        await using (var secondContext = fixture.CreateDbContext())
+        {
+            var service = CreateService(secondContext, now, snapshot);
+            var secondSummary = await service.ExecuteRunAsync();
+
+            Assert.Equal(0, secondSummary.InsertedCount);
+            Assert.Equal(0, secondSummary.UpdatedCount);
+            Assert.Equal(0, secondSummary.RevokedCount);
+            Assert.Equal(0, secondSummary.FinalizedCount);
+
+            var transactionCount = await secondContext.Transactions.CountAsync();
+            var auditCount = await secondContext.TransactionAudits.CountAsync();
+
+            Assert.Equal(2, transactionCount);
+            Assert.Equal(2, auditCount);
+        }
+    }
+
     private static TransactionIngestionService CreateService(
         TransactionsDbContext context,
         DateTime now,
