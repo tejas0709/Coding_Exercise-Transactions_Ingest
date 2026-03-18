@@ -112,6 +112,30 @@ public sealed class TransactionIngestionService(
             summary.RevokedCount++;
         }
 
+        if (options.EnableFinalization)
+        {
+            var toFinalize = dbContext.Transactions
+                .Where(x => x.TransactionTimeUtc < windowStart)
+                .Where(x => x.Status != TransactionStatus.Finalized)
+                .ToList();
+
+            foreach (var record in toFinalize)
+            {
+                var oldStatus = record.Status;
+                record.Status = TransactionStatus.Finalized;
+                record.UpdatedAtUtc = now;
+                AddAudit(record, summary.RunId, "Finalized", now, [
+                    new AuditChange
+                    {
+                        Field = "Status",
+                        OldValue = oldStatus.ToString(),
+                        NewValue = TransactionStatus.Finalized.ToString()
+                    }
+                ]);
+                summary.FinalizedCount++;
+            }
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
         return summary;
     }
