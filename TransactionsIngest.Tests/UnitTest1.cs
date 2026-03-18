@@ -193,6 +193,106 @@ public sealed class TransactionIngestionServiceTests
         }
     }
 
+    [Fact]
+    public async Task ExecuteRunAsync_DoesNotModifyFinalizedRecords()
+    {
+        var now = new DateTime(2026, 3, 18, 12, 0, 0, DateTimeKind.Utc);
+        await using var fixture = await SqliteFixture.CreateAsync();
+
+        await using (var seedContext = fixture.CreateDbContext())
+        {
+            seedContext.Transactions.Add(new TransactionRecord
+            {
+                TransactionId = 3001,
+                CardNumber = "************1111",
+                LocationCode = "STO-01",
+                ProductName = "Original Item",
+                Amount = 10.50m,
+                TransactionTimeUtc = now.AddHours(-30),
+                Status = TransactionStatus.Finalized,
+                CreatedAtUtc = now.AddHours(-30),
+                UpdatedAtUtc = now.AddHours(-30)
+            });
+            await seedContext.SaveChangesAsync();
+        }
+
+        await using (var context = fixture.CreateDbContext())
+        {
+            var service = CreateService(
+                context,
+                now,
+                [
+                    new IncomingTransactionDto
+                    {
+                        TransactionId = 3001,
+                        CardNumber = "4111111111111111",
+                        LocationCode = "STO-99",
+                        ProductName = "Changed Item",
+                        Amount = 99.99m,
+                        Timestamp = now.AddHours(-1)
+                    }
+                ]);
+
+            var summary = await service.ExecuteRunAsync();
+
+            Assert.Equal(0, summary.InsertedCount);
+            Assert.Equal(0, summary.UpdatedCount);
+            Assert.Equal(0, summary.RevokedCount);
+            Assert.Equal(0, summary.FinalizedCount);
+
+            var record = await context.Transactions.SingleAsync(x => x.TransactionId == 3001);
+            Assert.Equal(TransactionStatus.Finalized, record.Status);
+            Assert.Equal("STO-01", record.LocationCode);
+            Assert.Equal("Original Item", record.ProductName);
+            Assert.Equal(10.50m, record.Amount);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteRunAsync_DuplicateTransactionIdInSnapshot_UsesLatestTimestamp()
+    {
+        var now = new DateTime(2026, 3, 18, 12, 0, 0, DateTimeKind.Utc);
+        await using var fixture = await SqliteFixture.CreateAsync();
+
+        await using (var context = fixture.CreateDbContext())
+        {
+            var service = CreateService(
+                context,
+                now,
+                [
+                    new IncomingTransactionDto
+                    {
+                        TransactionId = 4001,
+                        CardNumber = "4111111111111111",
+                        LocationCode = "STO-NEW",
+                        ProductName = "Latest Version",
+                        Amount = 30.00m,
+                        Timestamp = now.AddHours(-1)
+                    },
+                    new IncomingTransactionDto
+                    {
+                        TransactionId = 4001,
+                        CardNumber = "4111111111111111",
+                        LocationCode = "STO-OLD",
+                        ProductName = "Old Version",
+                        Amount = 15.00m,
+                        Timestamp = now.AddHours(-5)
+                    }
+                ]);
+
+            var summary = await service.ExecuteRunAsync();
+
+            Assert.Equal(1, summary.InsertedCount);
+            Assert.Equal(0, summary.UpdatedCount);
+
+            var record = await context.Transactions.SingleAsync(x => x.TransactionId == 4001);
+            Assert.Equal("STO-NEW", record.LocationCode);
+            Assert.Equal("Latest Version", record.ProductName);
+            Assert.Equal(30.00m, record.Amount);
+            Assert.Equal(now.AddHours(-1), record.TransactionTimeUtc);
+        }
+    }
+
     private static TransactionIngestionService CreateService(
         TransactionsDbContext context,
         DateTime now,
