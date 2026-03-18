@@ -77,6 +77,70 @@ public sealed class TransactionIngestionServiceTests
         }
     }
 
+    [Fact]
+    public async Task ExecuteRunAsync_RevokesMissingInWindowRecords()
+    {
+        var now = new DateTime(2026, 3, 18, 12, 0, 0, DateTimeKind.Utc);
+        await using var fixture = await SqliteFixture.CreateAsync();
+
+        await using (var seedContext = fixture.CreateDbContext())
+        {
+            seedContext.Transactions.AddRange(
+                new TransactionRecord
+                {
+                    TransactionId = 1001,
+                    CardNumber = "************1111",
+                    LocationCode = "STO-01",
+                    ProductName = "Wireless Mouse",
+                    Amount = 19.99m,
+                    TransactionTimeUtc = now.AddHours(-3),
+                    Status = TransactionStatus.Active,
+                    CreatedAtUtc = now.AddHours(-3),
+                    UpdatedAtUtc = now.AddHours(-3)
+                },
+                new TransactionRecord
+                {
+                    TransactionId = 1002,
+                    CardNumber = "************0002",
+                    LocationCode = "STO-02",
+                    ProductName = "USB-C Cable",
+                    Amount = 25m,
+                    TransactionTimeUtc = now.AddHours(-2),
+                    Status = TransactionStatus.Active,
+                    CreatedAtUtc = now.AddHours(-2),
+                    UpdatedAtUtc = now.AddHours(-2)
+                });
+            await seedContext.SaveChangesAsync();
+        }
+
+        await using (var context = fixture.CreateDbContext())
+        {
+            var service = CreateService(
+                context,
+                now,
+                [
+                    new IncomingTransactionDto
+                    {
+                        TransactionId = 1002,
+                        CardNumber = "4000000000000002",
+                        LocationCode = "STO-02",
+                        ProductName = "USB-C Cable",
+                        Amount = 25m,
+                        Timestamp = now.AddHours(-2)
+                    }
+                ]);
+
+            var summary = await service.ExecuteRunAsync();
+
+            Assert.Equal(1, summary.RevokedCount);
+            var revoked = await context.Transactions.SingleAsync(x => x.TransactionId == 1001);
+            Assert.Equal(TransactionStatus.Revoked, revoked.Status);
+
+            var revokeAudit = await context.TransactionAudits.SingleAsync(x => x.TransactionId == 1001 && x.Action == "Revoked");
+            Assert.NotNull(revokeAudit);
+        }
+    }
+
     private static TransactionIngestionService CreateService(
         TransactionsDbContext context,
         DateTime now,
