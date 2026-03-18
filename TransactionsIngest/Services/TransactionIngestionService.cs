@@ -29,6 +29,8 @@ public sealed class TransactionIngestionService(
             FinalizedCount = 0
         };
 
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+
         var incomingSnapshot = await snapshotProvider.LoadLast24HourSnapshotAsync(cancellationToken);
         var distinctIncoming = incomingSnapshot
             .GroupBy(x => x.TransactionId)
@@ -137,6 +139,7 @@ public sealed class TransactionIngestionService(
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return summary;
     }
 
