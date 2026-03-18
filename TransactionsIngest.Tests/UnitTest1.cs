@@ -1,6 +1,7 @@
 ﻿using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using Xunit;
 using TransactionsIngest.Configuration;
 using TransactionsIngest.Data;
 using TransactionsIngest.DTOs;
