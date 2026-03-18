@@ -62,7 +62,7 @@ Refactor/
     appsettings.json
     TransactionsIngest.csproj
   TransactionsIngest.Tests/
-    UnitTest1.cs
+    TransactionIngestionServiceTests.cs
     TransactionsIngest.Tests.csproj
 ```
 
