@@ -90,6 +90,28 @@ public sealed class TransactionIngestionService(
             summary.UpdatedCount++;
         }
 
+        var windowStart = now.AddHours(-options.SnapshotWindowHours);
+        var toRevoke = dbContext.Transactions
+            .Where(x => x.TransactionTimeUtc >= windowStart)
+            .Where(x => x.Status == TransactionStatus.Active)
+            .Where(x => !incomingIds.Contains(x.TransactionId))
+            .ToList();
+
+        foreach (var record in toRevoke)
+        {
+            record.Status = TransactionStatus.Revoked;
+            record.UpdatedAtUtc = now;
+            AddAudit(record, summary.RunId, "Revoked", now, [
+                new AuditChange
+                {
+                    Field = "Status",
+                    OldValue = TransactionStatus.Active.ToString(),
+                    NewValue = TransactionStatus.Revoked.ToString()
+                }
+            ]);
+            summary.RevokedCount++;
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
         return summary;
     }
