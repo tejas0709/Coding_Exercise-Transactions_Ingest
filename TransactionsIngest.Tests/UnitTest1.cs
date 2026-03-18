@@ -1,5 +1,6 @@
 ﻿using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using TransactionsIngest.Configuration;
 using TransactionsIngest.Data;
 using TransactionsIngest.DTOs;
@@ -10,6 +11,8 @@ namespace TransactionsIngest.Tests;
 
 public sealed class TransactionIngestionServiceTests
 {
+    private static readonly JsonSerializerOptions AuditJsonOptions = new(JsonSerializerDefaults.Web);
+
     [Fact]
     public async Task ExecuteRunAsync_WithEmptySnapshot_CompletesSuccessfully()
     {
@@ -74,6 +77,11 @@ public sealed class TransactionIngestionServiceTests
 
             var updateAudit = await context.TransactionAudits.SingleAsync(x => x.TransactionId == 1001 && x.Action == "Updated");
             Assert.NotNull(updateAudit);
+
+            var changes = JsonSerializer.Deserialize<List<AuditChange>>(updateAudit.ChangesJson, AuditJsonOptions);
+            Assert.NotNull(changes);
+            Assert.Contains(changes!, x => x.Field == "LocationCode" && x.OldValue == "STO-01" && x.NewValue == "STO-09");
+            Assert.Contains(changes!, x => x.Field == "Amount" && x.OldValue == "19.99" && x.NewValue == "21.99");
         }
     }
 
@@ -138,6 +146,13 @@ public sealed class TransactionIngestionServiceTests
 
             var revokeAudit = await context.TransactionAudits.SingleAsync(x => x.TransactionId == 1001 && x.Action == "Revoked");
             Assert.NotNull(revokeAudit);
+
+            var changes = JsonSerializer.Deserialize<List<AuditChange>>(revokeAudit.ChangesJson, AuditJsonOptions);
+            Assert.NotNull(changes);
+            Assert.Single(changes!);
+            Assert.Equal("Status", changes![0].Field);
+            Assert.Equal("Active", changes[0].OldValue);
+            Assert.Equal("Revoked", changes[0].NewValue);
         }
     }
 
