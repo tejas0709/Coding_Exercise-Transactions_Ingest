@@ -309,6 +309,59 @@ public sealed class TransactionIngestionServiceTests
         }
     }
 
+    [Fact]
+    public async Task ExecuteRunAsync_ReactivatesRevokedRecord_WhenItReappears()
+    {
+        var now = new DateTime(2026, 3, 18, 12, 0, 0, DateTimeKind.Utc);
+        await using var fixture = await SqliteFixture.CreateAsync();
+
+        await using (var seedContext = fixture.CreateDbContext())
+        {
+            seedContext.Transactions.Add(new TransactionRecord
+            {
+                TransactionId = 5001,
+                CardNumber = "************1111",
+                LocationCode = "STO-01",
+                ProductName = "Wireless Mouse",
+                Amount = 19.99m,
+                TransactionTimeUtc = now.AddHours(-2),
+                Status = TransactionStatus.Revoked,
+                CreatedAtUtc = now.AddHours(-2),
+                UpdatedAtUtc = now.AddHours(-2)
+            });
+            await seedContext.SaveChangesAsync();
+        }
+
+        await using (var context = fixture.CreateDbContext())
+        {
+            var service = CreateService(
+                context,
+                now,
+                [
+                    new IncomingTransactionDto
+                    {
+                        TransactionId = 5001,
+                        CardNumber = "4111111111111111",
+                        LocationCode = "STO-01",
+                        ProductName = "Wireless Mouse",
+                        Amount = 19.99m,
+                        Timestamp = now.AddHours(-2)
+                    }
+                ]);
+
+            var summary = await service.ExecuteRunAsync();
+
+            Assert.Equal(1, summary.UpdatedCount);
+            var record = await context.Transactions.SingleAsync(x => x.TransactionId == 5001);
+            Assert.Equal(TransactionStatus.Active, record.Status);
+
+            var updateAudit = await context.TransactionAudits.SingleAsync(x => x.TransactionId == 5001 && x.Action == "Updated");
+            var changes = JsonSerializer.Deserialize<List<AuditChange>>(updateAudit.ChangesJson, AuditJsonOptions);
+            Assert.NotNull(changes);
+            Assert.Contains(changes!, x => x.Field == "Status" && x.OldValue == "Revoked" && x.NewValue == "Active");
+        }
+    }
+
     private static TransactionIngestionService CreateService(
         TransactionsDbContext context,
         DateTime now,
